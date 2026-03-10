@@ -39,8 +39,14 @@ import ops
 import pwgen
 import requests
 import tenacity
+from charms.grafana_k8s.v0.grafana_dashboard import (
+    GrafanaDashboardProvider,
+)
 from charms.loki_k8s.v1.loki_push_api import (
     LogForwarder,
+)
+from charms.prometheus_k8s.v0.prometheus_scrape import (
+    MetricsEndpointProvider,
 )
 from charms.rabbitmq_k8s.v0.rabbitmq import (
     RabbitMQProvides,
@@ -113,6 +119,7 @@ TIMER_NOTICE = "rabbitmq.local/timer"
 LB_LABEL = "rabbitmq-loadbalancer"
 RABBITMQ_SERVICE_PORT = 5672
 RABBITMQ_MANAGEMENT_PORT = 15672
+RABBITMQ_PROMETHEUS_PORT = 15692
 
 AMQP_RELATION = "amqp"
 
@@ -169,7 +176,11 @@ class RabbitMQOperatorCharm(CharmBase):
 
         # Open ports on default cluster IP
         # OpenStack services uses cluster IP from service rabbitmq
-        self.unit.set_ports(RABBITMQ_SERVICE_PORT, RABBITMQ_MANAGEMENT_PORT)
+        self.unit.set_ports(
+            RABBITMQ_SERVICE_PORT,
+            RABBITMQ_MANAGEMENT_PORT,
+            RABBITMQ_PROMETHEUS_PORT,
+        )
 
         # As the service ports are not dynamic, loadbalancer need not
         # be created/patched on upgrade-hook or update-status hook
@@ -231,6 +242,19 @@ class RabbitMQOperatorCharm(CharmBase):
 
         self._enable_plugin("rabbitmq_management")
         self._enable_plugin("rabbitmq_peer_discovery_k8s")
+        self._enable_plugin("rabbitmq_prometheus")
+
+        self.metrics_endpoint = MetricsEndpointProvider(
+            self,
+            jobs=[
+                {
+                    "static_configs": [
+                        {"targets": [f"*:{RABBITMQ_PROMETHEUS_PORT}"]}
+                    ]
+                }
+            ],
+        )
+        self.grafana_dashboard_provider = GrafanaDashboardProvider(self)
 
         # NOTE: ingress for management WebUI/API only
         self.management_ingress = IngressPerAppRequirer(

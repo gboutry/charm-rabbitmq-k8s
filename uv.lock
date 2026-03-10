@@ -560,6 +560,7 @@ name = "rabbitmq-k8s"
 version = "3.12"
 source = { virtual = "." }
 dependencies = [
+    { name = "cosl" },
     { name = "jsonschema" },
     { name = "lightkube" },
     { name = "lightkube-extensions" },
@@ -573,7 +574,6 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "cosl" },
     { name = "coverage" },
     { name = "flake8" },
     { name = "jubilant" },
@@ -586,7 +586,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cosl", marker = "extra == 'dev'" },
+    { name = "cosl", specifier = ">=0.0.53" },
     { name = "coverage", marker = "extra == 'dev'" },
     { name = "flake8", marker = "extra == 'dev'" },
     { name = "jsonschema" },

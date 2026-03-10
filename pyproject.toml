@@ -7,6 +7,7 @@ version = "3.12"
 requires-python = "~=3.12.0"
 
 dependencies = [
+    "cosl>=0.0.53",
     "ops",
     "pika",
     "pwgen",
@@ -28,7 +29,6 @@ dev = [
     "pytest-cov",
     "pyyaml",
     "jubilant",
-    "cosl",
 ]
 
 # Testing tools configuration

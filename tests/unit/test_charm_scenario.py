@@ -82,6 +82,32 @@ def test_get_operator_info_action(ctx, rabbitmq_container, networks):
     }
 
 
+def test_metrics_endpoint_provider_is_configured(ctx):
+    """The charm enables RabbitMQ Prometheus scraping in the constructor."""
+    with ctx(ctx.on.install(), testing.State()) as manager:
+        manager.run()
+
+    assert "rabbitmq_prometheus" in manager.charm._stored.enabled_plugins
+    assert manager.charm.metrics_endpoint._jobs == [
+        {
+            "metrics_path": "/metrics",
+            "static_configs": [{"targets": ["*:15692"]}],
+        }
+    ]
+
+
+def test_grafana_dashboard_provider_loads_bundled_dashboard(ctx):
+    """The charm exposes the bundled Grafana dashboards."""
+    with ctx(ctx.on.install(), testing.State(leader=True)) as manager:
+        manager.charm.grafana_dashboard_provider.reload_dashboards()
+        manager.run()
+
+    templates = manager.charm.grafana_dashboard_provider.dashboard_templates
+
+    assert len(templates) == 2
+    assert {template["charm"] for template in templates} == {"rabbitmq-k8s"}
+
+
 def test_rabbitmq_pebble_ready(ctx, rabbitmq_container, networks, monkeypatch):
     """Pebble ready configures the expected services and starts rabbitmq."""
     peer = testing.PeerRelation(

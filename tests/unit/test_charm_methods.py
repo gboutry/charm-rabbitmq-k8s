@@ -14,6 +14,9 @@
 
 """Mock-driven unit tests for RabbitMQOperatorCharm helpers."""
 
+from pathlib import (
+    Path,
+)
 from types import (
     SimpleNamespace,
 )
@@ -31,6 +34,16 @@ import pytest
 import requests
 
 import charm
+
+
+def test_grafana_dashboard_uses_cos_datasource_convention():
+    """Bundled dashboards should not ship legacy Grafana datasource placeholders."""
+    for dashboard_path in Path("src/grafana_dashboards").glob("*.json"):
+        dashboard = dashboard_path.read_text()
+
+        assert "${DS_PROMETHEUS}" not in dashboard
+        assert '"__inputs"' not in dashboard
+        assert "${prometheusds}" in dashboard
 
 
 def _fake_charm(**kwargs):
