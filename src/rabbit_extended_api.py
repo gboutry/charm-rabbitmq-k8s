@@ -30,6 +30,17 @@ import rabbitmq_admin
 class ExtendedAdminApi(rabbitmq_admin.AdminAPI):
     """Extend rabbitmq_admin.AdminAPI to cover missing endpoints the charm needs."""
 
+    def get_cluster_name(self) -> str | None:
+        """Return the RabbitMQ cluster name."""
+        return self._api_get("/api/overview").get("cluster_name")
+
+    def set_cluster_name(self, cluster_name: str) -> None:
+        """Set the RabbitMQ cluster name."""
+        self._api_put(
+            "/api/global-parameters/cluster_name",
+            data={"value": cluster_name},
+        )
+
     def list_queues(self):
         """A list of queues."""
         return self._api_get("/api/queues")

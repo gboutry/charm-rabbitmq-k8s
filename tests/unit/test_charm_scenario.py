@@ -20,6 +20,7 @@ from unittest.mock import (
 
 import ops.model
 import ops.pebble
+import requests
 from ops import (
     testing,
 )
@@ -180,6 +181,36 @@ def test_config_changed_proceeds_for_leader_without_operator_user(
     assert state_out.deferred == []
 
 
+def test_config_changed_leader_updates_cluster_name(
+    ctx, rabbitmq_container, networks, monkeypatch
+):
+    """The leader updates the RabbitMQ cluster name during config-changed."""
+    peer = testing.PeerRelation(
+        endpoint="peers",
+        local_app_data={
+            "operator_password": "foobar",
+            "erlang_cookie": "magicsecurity",
+        },
+        local_unit_data={},
+    )
+    state = _state(rabbitmq_container, networks, leader=True, relations=[peer])
+    admin_api = Mock(
+        get_cluster_name=Mock(return_value="rabbit@rabbitmq-k8s-0"),
+        set_cluster_name=Mock(),
+        list_quorum_queues=Mock(return_value=[]),
+    )
+
+    with ctx(ctx.on.config_changed(), state) as manager:
+        _patch_config_changed_for_success(
+            monkeypatch, manager.charm, admin_api=admin_api
+        )
+        manager.run()
+
+    admin_api.set_cluster_name.assert_called_once_with(
+        f"{manager.charm.model.name}-{manager.charm.app.name}"
+    )
+
+
 def test_config_changed_proceeds_for_non_leader_with_operator_user(
     ctx, rabbitmq_container, networks, monkeypatch
 ):
@@ -202,6 +233,70 @@ def test_config_changed_proceeds_for_non_leader_with_operator_user(
         state_out = manager.run()
 
     assert state_out.deferred == []
+
+
+def test_config_changed_leader_tolerates_cluster_name_auth_race(
+    ctx, rabbitmq_container, networks, monkeypatch
+):
+    """Cluster-name reconciliation should not fail config-changed on early 401s."""
+    peer = testing.PeerRelation(
+        endpoint="peers",
+        local_app_data={
+            "operator_password": "foobar",
+            "operator_user_created": "rmqadmin",
+            "erlang_cookie": "magicsecurity",
+        },
+        local_unit_data={},
+    )
+    state = _state(rabbitmq_container, networks, leader=True, relations=[peer])
+    response = requests.Response()
+    response.status_code = 401
+    http_error = requests.exceptions.HTTPError(response=response)
+    admin_api = Mock(
+        get_cluster_name=Mock(side_effect=http_error),
+        set_cluster_name=Mock(),
+        list_quorum_queues=Mock(return_value=[]),
+    )
+
+    with ctx(ctx.on.config_changed(), state) as manager:
+        _patch_config_changed_for_success(
+            monkeypatch, manager.charm, admin_api=admin_api
+        )
+        state_out = manager.run()
+
+    assert state_out.deferred == []
+    admin_api.set_cluster_name.assert_not_called()
+
+
+def test_config_changed_non_leader_skips_cluster_name_update(
+    ctx, rabbitmq_container, networks, monkeypatch
+):
+    """Non-leader units do not update the RabbitMQ cluster name."""
+    peer = testing.PeerRelation(
+        endpoint="peers",
+        local_app_data={
+            "operator_password": "foobar",
+            "operator_user_created": "rmqadmin",
+            "erlang_cookie": "magicsecurity",
+        },
+        local_unit_data={},
+    )
+    state = _state(
+        rabbitmq_container, networks, leader=False, relations=[peer]
+    )
+    admin_api = Mock(
+        get_cluster_name=Mock(return_value="rabbit@rabbitmq-k8s-0"),
+        set_cluster_name=Mock(),
+        list_quorum_queues=Mock(return_value=[]),
+    )
+
+    with ctx(ctx.on.config_changed(), state) as manager:
+        _patch_config_changed_for_success(
+            monkeypatch, manager.charm, admin_api=admin_api
+        )
+        manager.run()
+
+    admin_api.set_cluster_name.assert_not_called()
 
 
 def test_config_changed_defers_without_erlang_cookie(

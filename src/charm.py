@@ -364,6 +364,7 @@ class RabbitMQOperatorCharm(CharmBase):
                 logging.info("RabbitMQ started")
 
         _check_rmq_running()
+        self._ensure_cluster_name()
         self._on_update_status(event)
         self._reconcile_lb(None)
 
@@ -838,6 +839,11 @@ class RabbitMQOperatorCharm(CharmBase):
         return self.peers.operator_password
 
     @property
+    def cluster_name(self) -> str:
+        """Cluster name exposed by RabbitMQ."""
+        return f"{self.model.name}-{self.app.name}"
+
+    @property
     def rabbit_running(self) -> bool:
         """Check whether RabbitMQ is running by accessing its API."""
         try:
@@ -853,6 +859,28 @@ class RabbitMQOperatorCharm(CharmBase):
         except requests.exceptions.ConnectionError:
             return False
         return True
+
+    def _ensure_cluster_name(self) -> None:
+        """Ensure a stable cluster name is configured for this deployment."""
+        if not self.unit.is_leader():
+            return
+
+        try:
+            api = self._get_admin_api()
+            if api.get_cluster_name() == self.cluster_name:
+                return
+            api.set_cluster_name(self.cluster_name)
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(
+                "RabbitMQ not ready to reconcile cluster name yet: %s", e
+            )
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 401:
+                logger.warning(
+                    "RabbitMQ auth not ready to reconcile cluster name yet"
+                )
+                return
+            raise
 
     def _get_admin_api(
         self, username: str = None, password: str = None
