@@ -8,12 +8,19 @@ from __future__ import (
 )
 
 import json
+import os
+import shutil
+import subprocess  # nosec B404
 import time
 from pathlib import (
     Path,
 )
+from urllib.parse import (
+    quote,
+)
 
 import jubilant
+import pytest
 
 RABBITMQ_CONTAINER = "rabbitmq"
 
@@ -122,4 +129,144 @@ def wait_for_running_nodes(
     raise AssertionError(
         f"Timed out waiting for running nodes {expected_nodes}; "
         f"last status was {last_status}"
+    )
+
+
+def model_name(juju: jubilant.Juju) -> str:
+    """Return the active Juju model name."""
+    return juju.show_model().name.split("/")[-1]
+
+
+def loadbalancer_address(
+    juju: jubilant.Juju,
+    app_name: str,
+    timeout: int = 300,
+    interval: int = 5,
+) -> str:
+    """Return the external address of the RabbitMQ load balancer service."""
+    kubectl = shutil.which("kubectl")
+    if kubectl is None:
+        pytest.skip("kubectl is required for resiliency functional tests")
+
+    namespace = model_name(juju)
+    service_name = f"{app_name}-lb"
+    jsonpath = "{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        output = subprocess.run(
+            [
+                kubectl,
+                "get",
+                "service",
+                service_name,
+                "-n",
+                namespace,
+                "-o",
+                f"jsonpath={jsonpath}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )  # nosec B603
+        address = output.stdout.strip()
+        if address:
+            return address
+        time.sleep(interval)
+    raise AssertionError(
+        f"Timed out waiting for LoadBalancer address for {service_name}"
+    )
+
+
+def resilience_profile() -> dict[str, int]:
+    """Build a conservative perf-test profile based on local CPU capacity."""
+    cpus = max(2, os.cpu_count() or 2)
+    return {
+        "queues": min(48, max(8, cpus * 2)),
+        "producers": min(16, max(4, cpus // 2)),
+        "consumers": min(16, max(4, cpus // 2)),
+        "rate": min(160, max(40, cpus * 4)),
+        "confirm": 10,
+        "qos": 10,
+        "size": 1024,
+        "duration": 120,
+        "start_delay": min(30, max(10, cpus)),
+        "heartbeat_threads": min(4, max(1, cpus // 8)),
+        "consumer_pools": min(8, max(2, cpus // 3)),
+        "nio_threads": min(8, max(2, cpus // 4)),
+    }
+
+
+def start_perf_test(
+    *,
+    uri: str,
+    profile: dict[str, int],
+    test_id: str,
+    queue_prefix: str,
+) -> subprocess.Popen[str]:
+    """Start a bounded rabbitmq-perf-test process."""
+    perf_test = shutil.which("rabbitmq-perf-test")
+    if perf_test is None:
+        pytest.skip(
+            "rabbitmq-perf-test is required for resiliency functional tests"
+        )
+
+    args = [
+        perf_test,
+        "--uri",
+        uri,
+        "--id",
+        test_id,
+        "--queue-pattern",
+        f"{queue_prefix}-%03d",
+        "--queue-pattern-from",
+        "1",
+        "--queue-pattern-to",
+        str(profile["queues"]),
+        "--producers",
+        str(profile["producers"]),
+        "--consumers",
+        str(profile["consumers"]),
+        "--quorum-queue",
+        "--leader-locator",
+        "balanced",
+        "--confirm",
+        str(profile["confirm"]),
+        "--qos",
+        str(profile["qos"]),
+        "--multi-ack-every",
+        "5",
+        "--rate",
+        str(profile["rate"]),
+        "--size",
+        str(profile["size"]),
+        "--producer-random-start-delay",
+        str(profile["start_delay"]),
+        "--heartbeat-sender-threads",
+        str(profile["heartbeat_threads"]),
+        "--consumers-thread-pools",
+        str(profile["consumer_pools"]),
+        "--nio-threads",
+        str(profile["nio_threads"]),
+        "--time",
+        str(profile["duration"]),
+    ]
+    return subprocess.Popen(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )  # nosec B603
+
+
+def amqp_uri(
+    *,
+    username: str,
+    password: str,
+    host: str,
+    vhost: str,
+    port: int = 5672,
+) -> str:
+    """Build an AMQP URI for rabbitmq-perf-test."""
+    return (
+        f"amqp://{username}:{password}@{host}:{port}/{quote(vhost, safe='')}"
     )

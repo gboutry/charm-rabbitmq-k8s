@@ -17,6 +17,7 @@ jobs:
         run: |
           sudo snap install --classic charmcraft
           sudo snap install --classic concierge
+          sudo snap install rabbitmq-perf-test
       - name: Prepare charm test environment
         run: |
           sudo concierge prepare -p k8s
